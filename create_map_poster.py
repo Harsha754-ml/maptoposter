@@ -19,7 +19,6 @@ from pathlib import Path
 from hashlib import md5
 from typing import cast
 from geopandas import GeoDataFrame
-import pickle
 
 class CacheError(Exception):
     """Raised when a cache operation fails."""
@@ -62,39 +61,6 @@ ox.settings.log_console = False
 THEMES_DIR = "themes"
 FONTS_DIR = "fonts"
 POSTERS_DIR = "posters"
-
-CACHE_DIR = ".cache"
-
-class CacheError(Exception):
-    pass
-
-
-def _cache_path(key: str) -> str:
-    safe = key.replace(os.sep, "_")
-    return os.path.join(CACHE_DIR, f"{safe}.pkl")
-
-
-def cache_get(key: str):
-    try:
-        path = _cache_path(key)
-        if not os.path.exists(path):
-            return None
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    except Exception as e:
-        raise CacheError(f"Cache read failed: {e}")
-
-
-def cache_set(key: str, value):
-    try:
-        if not os.path.exists(CACHE_DIR):
-            os.makedirs(CACHE_DIR)
-        path = _cache_path(key)
-        with open(path, "wb") as f:
-            pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
-    except Exception as e:
-        raise CacheError(f"Cache write failed: {e}")
-
 
 def load_fonts():
     """
@@ -177,7 +143,7 @@ def load_theme(theme_name="feature_based"):
         return theme
 
 # Load theme (can be changed via command line or input)
-THEME = dict[str, str]()  # Will be loaded later
+THEME = {}
 
 def create_gradient_fade(ax, color, location='bottom', zorder=10):
     """
@@ -328,16 +294,6 @@ def get_coordinates(city, country):
 def get_crop_limits(G: MultiDiGraph, fig: Figure) -> tuple[tuple[float, float], tuple[float, float]]:
     """
     Determine cropping limits to maintain aspect ratio of the figure.
-
-    This function calculates the extents of the graph's nodes and adjusts
-    the x and y limits to match the aspect ratio of the provided figure.
-    
-    :param G: The graph to be plotted
-    :type G: MultiDiGraph
-    :param fig: The matplotlib figure object
-    :type fig: Figure
-    :return: Tuple of x and y limits for cropping
-    :rtype: tuple[tuple[float, float], tuple[float, float]]
     """
     # Compute node extents in projected coordinates
     xs = [data['x'] for _, data in G.nodes(data=True)]
@@ -420,28 +376,7 @@ def fetch_features(point, dist, tags, name) -> GeoDataFrame | None:
         print(f"OSMnx error while fetching features: {e}")
         return None
 
-
-def fetch_graph(point, dist):
-    lat, lon = point
-    graph_key = f"graph_{lat}_{lon}_{dist}"
-    cached = cache_get(graph_key)
-    if cached is not None:
-        print("✓ Using cached street network")
-        return cached
-
-    try:
-        G = ox.graph_from_point(point, dist=dist, dist_type='bbox', network_type='all')
-        time.sleep(0.5)
-        try:
-            cache_set(graph_key, G)
-        except CacheError as e:
-            print(e)
-        return G
-    except Exception as e:
-        print(f"OSMnx error while fetching graph: {e}")
-        return None
-
-def create_poster(city, country, point, dist, output_file, output_format, fast_mode=False, dpi=300, title=None, subtitle=None, tagline=None):
+def create_poster(city, country, point, dist, output_file, output_format, fast_mode=False, dpi=300, title=None, subtitle=None, tagline=None, country_label=None):
     print(f"\nGenerating map for {city}, {country}...")
     
     # Progress bar for data fetching
@@ -449,7 +384,9 @@ def create_poster(city, country, point, dist, output_file, output_format, fast_m
         # 1. Fetch Street Network
         network_type = 'drive' if fast_mode else 'all'
         pbar.set_description(f"Downloading street network ({network_type})")
-        G = ox.graph_from_point(point, dist=dist, dist_type='bbox', network_type=network_type)
+        G = fetch_graph(point, dist)
+        if G is None:
+             raise ValueError("Failed to fetch graph data")
         pbar.update(1)
         
         # 2. Fetch Water Features
@@ -551,16 +488,20 @@ def create_poster(city, country, point, dist, output_file, output_format, fast_m
 
     # --- BOTTOM TEXT ---
     display_title = title if title else city
-    display_subtitle = subtitle if subtitle else country
+    
+    if subtitle:
+        display_subtitle = subtitle
+    elif country_label:
+        display_subtitle = country_label
+    else:
+        display_subtitle = country
     
     spaced_title = "  ".join(list(display_title.upper()))
     
     ax.text(0.5, 0.14, spaced_title, transform=ax.transAxes,
             color=THEME['text'], ha='center', fontproperties=font_main_adjusted, zorder=11)
     
-    ax.text(0.5, 0.10, display_subtitle, transform=ax.transAxes,
-    country_text = country_label if country_label is not None else country
-    ax.text(0.5, 0.10, country_text.upper(), transform=ax.transAxes,
+    ax.text(0.5, 0.10, display_subtitle.upper(), transform=ax.transAxes,
             color=THEME['text'], ha='center', fontproperties=font_sub, zorder=11)
     
     lat, lon = point
@@ -649,7 +590,7 @@ Options:
   --country-label   Override country text displayed on poster
   --theme, -t       Theme name (default: feature_based)
   --all-themes      Generate posters for all themes
-  --distance, -d    Map radius in meters (default: 29000)
+  --distance, -d    Map radius in meters (default: 12000)
   --list-themes     List all available themes
 
 Distance guide:
@@ -659,7 +600,7 @@ Distance guide:
 
 Available themes can be found in the 'themes/' directory.
 Generated posters are saved to 'posters/' directory.
-""")
+")
 
 def list_themes():
     """List all available themes with descriptions."""
@@ -705,7 +646,6 @@ Examples:
     parser.add_argument('--theme', '-t', type=str, default='feature_based', help='Theme name (default: feature_based)')
     parser.add_argument('--distance', '-d', type=int, default=12000, help='Map radius in meters (default: 12000)')
     parser.add_argument('--all-themes', '--All-themes', dest='all_themes', action='store_true', help='Generate posters for all themes')
-    parser.add_argument('--distance', '-d', type=int, default=29000, help='Map radius in meters (default: 29000)')
     parser.add_argument('--list-themes', action='store_true', help='List all available themes')
     parser.add_argument('--format', '-f', default='png', choices=['png', 'svg', 'pdf'],help='Output format for the poster (default: png)')
     parser.add_argument('--dpi', type=int, default=300, help='DPI for PNG output (default: 300)')
@@ -758,11 +698,19 @@ Examples:
             output_file = args.output
         else:
             output_file = generate_output_filename(args.city, args.theme, args.format)
-        create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.fast, args.dpi, args.title, args.subtitle, args.tagline)
-        for theme_name in themes_to_generate:
-            THEME = load_theme(theme_name)
-            output_file = generate_output_filename(args.city, theme_name, args.format)
-            create_poster(args.city, args.country, coords, args.distance, output_file, args.format, country_label=args.country_label)
+        
+        # Only generate single poster if not all_themes
+        if not args.all_themes:
+             create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.fast, args.dpi, args.title, args.subtitle, args.tagline, args.country_label)
+        
+        # Generate all themes if requested
+        if args.all_themes:
+            for theme_name in themes_to_generate:
+                THEME = load_theme(theme_name)
+                output_file = generate_output_filename(args.city, theme_name, args.format)
+                # Note: passing fast/dpi/title/etc might be desired here too?
+                # The upstream loop only passed country_label. I will pass the others for consistency.
+                create_poster(args.city, args.country, coords, args.distance, output_file, args.format, args.fast, args.dpi, args.title, args.subtitle, args.tagline, args.country_label)
         
         print("\n" + "=" * 50)
         print("✓ Poster generation complete!")

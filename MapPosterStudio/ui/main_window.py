@@ -120,11 +120,11 @@ class MainWindow(QMainWindow):
         self.radius_slider = QSlider(Qt.Horizontal)
         self.radius_slider.setRange(500, 50000)
         self.radius_slider.setSingleStep(500)
-        self.radius_slider.setValue(15000)
+        self.radius_slider.setValue(12000)
         self.radius_spin = QSpinBox()
         self.radius_spin.setRange(500, 50000)
         self.radius_spin.setSingleStep(500)
-        self.radius_spin.setValue(15000)
+        self.radius_spin.setValue(12000)
         self.radius_spin.setSuffix(" m")
         self.radius_spin.setFixedWidth(80)
         self.radius_slider.valueChanged.connect(self.radius_spin.setValue)
@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
         self.country_input.clear()
         self.preset_combo.setCurrentIndex(0) # Custom
         self.theme_combo.setCurrentIndex(0) # Default
-        self.radius_spin.setValue(15000)
+        self.radius_spin.setValue(12000)
         self.dpi_spin.setValue(300)
         self.title_input.clear()
         self.subtitle_input.clear()
